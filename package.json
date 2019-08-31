@@ -1,0 +1,5 @@
+{
+    "scripts": {
+        "build": "rm -rf dist && mkdir -p dist && tsc"
+    }
+}
