@@ -79,9 +79,10 @@ namespace Game {
       export const vert = `
                 precision mediump float;
                 attribute vec2 position;
+                uniform float uScale;
 
                 void main() {
-                    gl_Position = vec4(position, 0.0, 1.0);
+                    gl_Position = vec4(position * uScale, 0.0, 1.0);
                 }
             ` as Shader.Source;
 
@@ -109,11 +110,28 @@ namespace Game {
       export const frag = `
                 precision mediump float;
                 uniform sampler2D uSourceImage;
+                uniform vec2 uResolution;
                 varying vec2 texCoord;
 
                 void main() {
-                    vec3 srcCol = texture2D(uSourceImage, texCoord).xyz;
-                    gl_FragColor = vec4(srcCol, 0.5);
+                  const int kernelHalfWidth = 12;
+
+                  vec3 srcCol = texture2D(uSourceImage, texCoord).xyz;
+                  vec3 glowCol = vec3(0.0, 0.0, 0.0);
+                  for (int x = -kernelHalfWidth; x < kernelHalfWidth; x++) {
+                    for (int y = -kernelHalfWidth; y < kernelHalfWidth; y++) {
+                      vec2 perPixel = 1.0 / uResolution;
+                      vec2 offset = vec2(perPixel.x * float(x), perPixel.y * float(y));
+                      // float dist = sqrt(exp(offset.x, 2), exp(offset.y, 2));
+                      float dist = distance(vec2(0.0, 0.0), offset);
+                      float magnitude = (1.0 - (dist / float(kernelHalfWidth))) + 0.5;
+                      glowCol += (texture2D(uSourceImage, texCoord + offset).xyz * magnitude);
+                    }
+                  }
+                  glowCol = glowCol / ((float(kernelHalfWidth) * 2.0) * (float(kernelHalfWidth) * 2.0));
+                  gl_FragColor = vec4(srcCol, 1.0) + vec4(glowCol, 1.0);
+                  // gl_FragColor = vec4(srcCol, 1.0);
+                  // gl_FragColor = vec4(glowCol, 1.0);
                 }
         ` as Shader.Source;
     }
@@ -261,6 +279,9 @@ namespace Game {
 
     gl.useProgram(program);
 
+    const uScale = gl.getUniformLocation(program, "uScale");
+    gl.uniform1f(uScale, 0.2);
+
     // FIRST PASS - Raw game
 
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -300,6 +321,9 @@ namespace Game {
     gl.bindTexture(gl.TEXTURE_2D, firstPassTarget.texture);
     const uTexLoc = gl.getUniformLocation(glowProgram, "uSourceImage");
     gl.uniform1i(uTexLoc, 0);
+
+    const uResolution = gl.getUniformLocation(glowProgram, "uResolution");
+    gl.uniform2f(uResolution, canvas.width, canvas.height);
 
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
