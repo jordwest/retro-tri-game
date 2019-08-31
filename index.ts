@@ -1,4 +1,5 @@
-type GL = WebGLRenderingContext;
+const GL = WebGLRenderingContext;
+
 namespace Result {
   export type Ok<A> = { type: "ok"; value: A };
   export type Err<B> = { type: "err"; error: B };
@@ -10,6 +11,7 @@ namespace Result {
   export const err = <A, B>(error: B): T<A, B> => ({ type: "err", error });
   export const unwrap = <A, B>(v: T<A, B>): A => {
     if (v.type === "err") {
+      console.error(v.error);
       throw v.error;
     }
     return v.value;
@@ -29,7 +31,7 @@ namespace Game {
 
     export namespace Utils {
       export function createProgram(
-        gl: GL,
+        gl: WebGL.Ctx,
         vertSrc: Source,
         fragSrc: Source
       ): Result.T<WebGLProgram, ShaderError> {
@@ -74,19 +76,46 @@ namespace Game {
     }
 
     export namespace Color {
-      export const frag = `
-                void main() {
-                    gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-                }
-            ` as Shader.Source;
-
       export const vert = `
+                precision mediump float;
                 attribute vec2 position;
 
                 void main() {
                     gl_Position = vec4(position, 0.0, 1.0);
                 }
             ` as Shader.Source;
+
+      export const frag = `
+                precision mediump float;
+                void main() {
+                    gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+                }
+            ` as Shader.Source;
+    }
+
+    export namespace Glow {
+      export const vert = `
+                precision mediump float;
+                attribute vec2 position;
+                attribute vec2 aTexCoord;
+                varying vec2 texCoord;
+
+                void main() {
+                    texCoord = aTexCoord;
+                    gl_Position = vec4(position, 0.0, 1.0);
+                }
+            ` as Shader.Source;
+
+      export const frag = `
+                precision mediump float;
+                uniform sampler2D uSourceImage;
+                varying vec2 texCoord;
+
+                void main() {
+                    vec3 srcCol = texture2D(uSourceImage, texCoord).xyz;
+                    gl_FragColor = vec4(srcCol, 0.5);
+                }
+        ` as Shader.Source;
     }
   }
 
@@ -121,8 +150,80 @@ namespace Game {
     }
   }
 
+  export namespace WebGL {
+    export type Ctx = WebGLRenderingContext;
+    export function createQuad(x1: number, y1: number, x2: number, y2: number) {
+      return Vec2.FloatArray.from([
+        { x: x1, y: y1 },
+        { x: x2, y: y1 },
+        { x: x1, y: y2 },
+        { x: x2, y: y1 },
+        { x: x1, y: y2 },
+        { x: x2, y: y2 }
+      ]);
+    }
+
+    export class RenderTarget {
+      framebuffer: WebGLFramebuffer;
+      texture: WebGLTexture;
+      gl: Ctx;
+
+      private constructor(gl: Ctx, width: number, height: number) {
+        this.framebuffer = gl.createFramebuffer();
+        if (!this.framebuffer) {
+          throw new Error("Could not create framebuffer");
+        }
+        this.texture = gl.createTexture();
+        if (!this.texture) {
+          throw new Error("Could not create texture");
+        }
+        this.gl = gl;
+
+        gl.bindTexture(gl.TEXTURE_2D, this.texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+        gl.getExtension("OES_texture_float");
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          width,
+          height,
+          0,
+          gl.RGBA,
+          gl.FLOAT,
+          null
+        );
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+        // Attach a texture to it.
+        gl.framebufferTexture2D(
+          gl.FRAMEBUFFER,
+          gl.COLOR_ATTACHMENT0,
+          gl.TEXTURE_2D,
+          this.texture,
+          0
+        );
+      }
+
+      static create(gl: Ctx, width: number, height: number) {
+        return new RenderTarget(gl, width, height);
+      }
+
+      use() {
+        this.gl.bindFramebuffer(GL.FRAMEBUFFER, this.framebuffer);
+      }
+
+      disconnect() {
+        this.gl.bindFramebuffer(GL.FRAMEBUFFER, null);
+      }
+    }
+  }
+
   export function main() {
-    console.log("hello");
     const canvas = document.getElementById("game") as HTMLCanvasElement;
 
     canvas.width = window.devicePixelRatio * window.innerWidth;
@@ -132,31 +233,79 @@ namespace Game {
     const program = Result.unwrap(
       Shader.Utils.createProgram(gl, Shader.Color.vert, Shader.Color.frag)
     );
-    console.log(program);
 
-    const buffer = gl.createBuffer();
-    const data = Vec2.FloatArray.from([
+    const glowProgram = Result.unwrap(
+      Shader.Utils.createProgram(gl, Shader.Glow.vert, Shader.Glow.frag)
+    );
+
+    const triBuffer = gl.createBuffer();
+    const tri = Vec2.FloatArray.from([
       { x: -1, y: -1 },
       { x: 0, y: 1 },
       { x: 1, y: -1 }
     ]);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, data.arr, gl.STATIC_DRAW);
+    const firstPassTarget = WebGL.RenderTarget.create(
+      gl,
+      canvas.width,
+      canvas.height
+    );
+    firstPassTarget.use();
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, triBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, tri.arr, gl.STATIC_DRAW);
 
     const attribLocation = gl.getAttribLocation(program, "position");
     gl.vertexAttribPointer(attribLocation, 2, gl.FLOAT, false, 0, 0);
     gl.enableVertexAttribArray(attribLocation);
 
+    gl.useProgram(program);
+
+    // FIRST PASS - Raw game
+
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.useProgram(program);
-    gl.drawArrays(gl.TRIANGLES, 0, data.length);
+    gl.drawArrays(gl.TRIANGLES, 0, tri.length);
+
+    firstPassTarget.disconnect();
+
+    // SECOND PASS - Glow effect
+
+    const quadBuffer = gl.createBuffer();
+    const quad = WebGL.createQuad(-1, -1, 1, 1);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, quad.arr, gl.STATIC_DRAW);
+
+    gl.useProgram(glowProgram);
+
+    const quadAttribLocation = gl.getAttribLocation(glowProgram, "position");
+    gl.vertexAttribPointer(quadAttribLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(quadAttribLocation);
+
+    const texQuadBuffer = gl.createBuffer();
+    const texQuad = WebGL.createQuad(0, 0, 1, 1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, texQuadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, texQuad.arr, gl.STATIC_DRAW);
+
+    const texQuadAttribLocation = gl.getAttribLocation(
+      glowProgram,
+      "aTexCoord"
+    );
+    gl.vertexAttribPointer(texQuadAttribLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(texQuadAttribLocation);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, firstPassTarget.texture);
+    const uTexLoc = gl.getUniformLocation(glowProgram, "uSourceImage");
+    gl.uniform1i(uTexLoc, 0);
+
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.drawArrays(gl.TRIANGLES, 0, quad.length);
   }
 }
-
-// const audioCtx = new AudioContext();
-// const ws = audioCtx.createWaveShaper();
 
 Game.main();
