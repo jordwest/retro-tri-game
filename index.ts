@@ -181,6 +181,11 @@ namespace Game {
       ]);
     }
 
+    namespace GlType {
+      export type T = "float" | "int";
+      export const toGL = (t: T) => (t === "float" ? GL.FLOAT : GL.INT);
+    }
+
     export class RenderTarget {
       framebuffer: WebGLFramebuffer;
       texture: WebGLTexture;
@@ -239,6 +244,61 @@ namespace Game {
         this.gl.bindFramebuffer(GL.FRAMEBUFFER, null);
       }
     }
+
+    export class Buffer {
+      gl: Ctx;
+      glBuffer: WebGLBuffer;
+      glType: GlType.T;
+      length: number;
+      componentSize: number;
+
+      constructor(gl: Ctx, glType: GlType.T, componentSize: number) {
+        this.gl = gl;
+        this.glBuffer = gl.createBuffer();
+        this.glType = glType;
+        this.componentSize = componentSize;
+        this.length = 0;
+      }
+
+      set(arr: BufferSource & { length: number }) {
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.glBuffer);
+        this.gl.bufferData(
+          this.gl.ARRAY_BUFFER,
+          arr as any,
+          this.gl.STATIC_DRAW
+        );
+        this.length = arr.length;
+      }
+
+      get components() {
+        return this.length / this.componentSize;
+      }
+    }
+
+    export class Program {
+      gl: Ctx;
+      glProgram: WebGLProgram;
+
+      constructor(gl: Ctx, glProgram: WebGLProgram) {}
+
+      use() {
+        this.gl.useProgram(this.glProgram);
+      }
+
+      addVertexAttribArray(attribName: string, buf: Buffer) {
+        this.use();
+        const location = this.gl.getAttribLocation(this.glProgram, attribName);
+        this.gl.vertexAttribPointer(
+          location,
+          buf.componentSize,
+          GlType.toGL(buf.glType),
+          false,
+          0,
+          0
+        );
+        this.gl.enableVertexAttribArray(location);
+      }
+    }
   }
 
   export function main() {
@@ -293,11 +353,8 @@ namespace Game {
 
     // SECOND PASS - Glow effect
 
-    const quadBuffer = gl.createBuffer();
-    const quad = WebGL.createQuad(-1, -1, 1, 1);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, quad.arr, gl.STATIC_DRAW);
+    const quadBuffer = new WebGL.Buffer(gl, "float", 2);
+    quadBuffer.set(WebGL.createQuad(-1, -1, 1, 1).arr);
 
     gl.useProgram(glowProgram);
 
@@ -305,10 +362,8 @@ namespace Game {
     gl.vertexAttribPointer(quadAttribLocation, 2, gl.FLOAT, false, 0, 0);
     gl.enableVertexAttribArray(quadAttribLocation);
 
-    const texQuadBuffer = gl.createBuffer();
-    const texQuad = WebGL.createQuad(0, 0, 1, 1);
-    gl.bindBuffer(gl.ARRAY_BUFFER, texQuadBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, texQuad.arr, gl.STATIC_DRAW);
+    const texQuadBuffer = new WebGL.Buffer(gl, "float", 2);
+    texQuadBuffer.set(WebGL.createQuad(0, 0, 1, 1).arr);
 
     const texQuadAttribLocation = gl.getAttribLocation(
       glowProgram,
@@ -328,7 +383,12 @@ namespace Game {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.drawArrays(gl.TRIANGLES, 0, quad.length);
+    console.log(
+      quadBuffer.length,
+      quadBuffer.components,
+      quadBuffer.componentSize
+    );
+    gl.drawArrays(gl.TRIANGLES, 0, quadBuffer.components);
   }
 }
 
