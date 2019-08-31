@@ -125,6 +125,9 @@ namespace Game {
     console.log("hello");
     const canvas = document.getElementById("game") as HTMLCanvasElement;
 
+    canvas.width = window.devicePixelRatio * window.innerWidth;
+    canvas.height = window.devicePixelRatio * window.innerHeight;
+
     const gl = canvas.getContext("webgl");
     const program = Result.unwrap(
       Shader.Utils.createProgram(gl, Shader.Color.vert, Shader.Color.frag)
@@ -133,9 +136,9 @@ namespace Game {
 
     const buffer = gl.createBuffer();
     const data = Vec2.FloatArray.from([
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
-      { x: 1, y: 1 }
+      { x: -1, y: -1 },
+      { x: 0, y: 1 },
+      { x: 1, y: -1 }
     ]);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -144,6 +147,9 @@ namespace Game {
     const attribLocation = gl.getAttribLocation(program, "position");
     gl.vertexAttribPointer(attribLocation, 2, gl.FLOAT, false, 0, 0);
     gl.enableVertexAttribArray(attribLocation);
+
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.useProgram(program);
     gl.drawArrays(gl.TRIANGLES, 0, data.length);
