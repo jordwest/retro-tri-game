@@ -316,12 +316,11 @@ namespace Game {
       Shader.Utils.createProgram(gl, Shader.Glow.vert, Shader.Glow.frag)
     );
 
-    const triBuffer = gl.createBuffer();
-    const tri = Vec2.FloatArray.from([
-      { x: -1, y: -1 },
-      { x: 0, y: 1 },
-      { x: 1, y: -1 }
-    ]);
+    const triBuffer = new WebGL.Buffer(gl, "float", 2);
+    triBuffer.set(
+      Vec2.FloatArray.from([{ x: -1, y: -1 }, { x: 0, y: 1 }, { x: 1, y: -1 }])
+        .arr
+    );
 
     const firstPassTarget = WebGL.RenderTarget.create(
       gl,
@@ -329,9 +328,6 @@ namespace Game {
       canvas.height
     );
     firstPassTarget.use();
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, triBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, tri.arr, gl.STATIC_DRAW);
 
     const attribLocation = gl.getAttribLocation(program, "position");
     gl.vertexAttribPointer(attribLocation, 2, gl.FLOAT, false, 0, 0);
@@ -347,7 +343,7 @@ namespace Game {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.drawArrays(gl.TRIANGLES, 0, tri.length);
+    gl.drawArrays(gl.TRIANGLES, 0, triBuffer.components);
 
     firstPassTarget.disconnect();
 
