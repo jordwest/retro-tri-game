@@ -180,6 +180,10 @@ namespace Game {
         { x: x2, y: y2 }
       ]);
     }
+    export function clear(gl: Ctx) {
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
 
     namespace GlType {
       export type T = "float" | "int";
@@ -260,6 +264,10 @@ namespace Game {
         this.length = 0;
       }
 
+      bind() {
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.glBuffer);
+      }
+
       set(arr: BufferSource & { length: number }) {
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.glBuffer);
         this.gl.bufferData(
@@ -317,6 +325,7 @@ namespace Game {
 
       addVertexAttribArray(attribName: string, buf: Buffer) {
         this.use();
+        buf.bind();
         const location = this.gl.getAttribLocation(this.glProgram, attribName);
         this.gl.vertexAttribPointer(
           location,
@@ -337,6 +346,77 @@ namespace Game {
     }
   }
 
+  export namespace Renderers {
+    export class Clear {
+      gl: WebGL.Ctx;
+
+      constructor(gl: WebGL.Ctx) {
+        this.gl = gl;
+      }
+
+      render() {
+        this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        this.gl.clear(GL.COLOR_BUFFER_BIT);
+      }
+    }
+
+    export class Triangle {
+      gl: WebGL.Ctx;
+      program: WebGL.Program;
+      triBuffer: WebGL.Buffer;
+
+      constructor(gl: WebGL.Ctx) {
+        const program = WebGL.Program.create(
+          gl,
+          Shader.Color.vert,
+          Shader.Color.frag
+        );
+
+        this.triBuffer = new WebGL.Buffer(gl, "float", 2);
+        this.triBuffer.set(
+          Vec2.FloatArray.from([
+            { x: -1, y: -1 },
+            { x: 0, y: 1 },
+            { x: 1, y: -1 }
+          ]).arr
+        );
+        program.addVertexAttribArray("position", this.triBuffer);
+
+        this.gl = gl;
+        this.program = program;
+      }
+
+      render(opts: { scale: number }) {
+        const uScale = this.program.getUniform("uScale");
+        uScale.set1f(opts.scale);
+        this.gl.drawArrays(GL.TRIANGLES, 0, this.triBuffer.components);
+      }
+    }
+
+    export class Blur {
+      program: WebGL.Program;
+
+      constructor(gl: WebGL.Ctx) {
+        const program = WebGL.Program.create(
+          gl,
+          Shader.Glow.vert,
+          Shader.Glow.frag
+        );
+
+        const triBuffer = new WebGL.Buffer(gl, "float", 2);
+        triBuffer.set(
+          Vec2.FloatArray.from([
+            { x: -1, y: -1 },
+            { x: 0, y: 1 },
+            { x: 1, y: -1 }
+          ]).arr
+        );
+
+        program.addVertexAttribArray("position", triBuffer);
+      }
+    }
+  }
+
   export function main() {
     const canvas = document.getElementById("game") as HTMLCanvasElement;
 
@@ -345,21 +425,10 @@ namespace Game {
 
     const gl = canvas.getContext("webgl");
 
-    const triProgram = WebGL.Program.create(
-      gl,
-      Shader.Color.vert,
-      Shader.Color.frag
-    );
     const glowProgram = WebGL.Program.create(
       gl,
       Shader.Glow.vert,
       Shader.Glow.frag
-    );
-
-    const triBuffer = new WebGL.Buffer(gl, "float", 2);
-    triBuffer.set(
-      Vec2.FloatArray.from([{ x: -1, y: -1 }, { x: 0, y: 1 }, { x: 1, y: -1 }])
-        .arr
     );
 
     const firstPassTarget = WebGL.RenderTarget.create(
@@ -369,52 +438,38 @@ namespace Game {
     );
     firstPassTarget.use();
 
-    triProgram.addVertexAttribArray("position", triBuffer);
-    triProgram.use();
-
-    const uScale = triProgram.getUniform("uScale");
-    uScale.set1f(0.2);
+    const triangleRenderer = new Renderers.Triangle(gl);
 
     // FIRST PASS - Raw game
 
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-
-    gl.drawArrays(gl.TRIANGLES, 0, triBuffer.components);
+    WebGL.clear(gl);
+    triangleRenderer.render({ scale: 0.2 });
 
     firstPassTarget.disconnect();
 
     // SECOND PASS - Glow effect
 
     const quadBuffer = new WebGL.Buffer(gl, "float", 2);
-    quadBuffer.set(WebGL.createQuad(-1, -1, 1, 1).arr);
-
-    glowProgram.use();
-
-    glowProgram.addVertexAttribArray("position", quadBuffer);
-
     const texQuadBuffer = new WebGL.Buffer(gl, "float", 2);
+
+    quadBuffer.set(WebGL.createQuad(-1, -1, 1, 1).arr);
     texQuadBuffer.set(WebGL.createQuad(0, 0, 1, 1).arr);
 
+    glowProgram.addVertexAttribArray("position", quadBuffer);
     glowProgram.addVertexAttribArray("aTexCoord", texQuadBuffer);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, firstPassTarget.texture);
 
     const uTexLoc = glowProgram.getUniform("uSourceImage");
-    uTexLoc.set1i(0);
-
     const uResolution = glowProgram.getUniform("uResolution");
+
+    uTexLoc.set1i(0);
     uResolution.set2f(canvas.width, canvas.height);
 
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    WebGL.clear(gl);
 
-    console.log(
-      quadBuffer.length,
-      quadBuffer.components,
-      quadBuffer.componentSize
-    );
+    glowProgram.use();
     gl.drawArrays(gl.TRIANGLES, 0, quadBuffer.components);
   }
 }
