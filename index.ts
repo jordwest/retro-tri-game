@@ -275,14 +275,44 @@ namespace Game {
       }
     }
 
-    export class Program {
+    export class Uniform {
       gl: Ctx;
-      glProgram: WebGLProgram;
+      loc: WebGLUniformLocation;
 
-      constructor(gl: Ctx, glProgram: WebGLProgram) {}
+      constructor(gl: Ctx, loc: WebGLUniformLocation) {
+        this.gl = gl;
+        this.loc = loc;
+      }
+
+      set1f(x: number) {
+        this.gl.uniform1f(this.loc, x);
+      }
+
+      set1i(x: number) {
+        this.gl.uniform1i(this.loc, x);
+      }
+
+      set2f(x: number, y: number) {
+        this.gl.uniform2f(this.loc, x, y);
+      }
+    }
+
+    export class Program {
+      constructor(public gl: Ctx, public glProgram: WebGLProgram) {}
 
       use() {
         this.gl.useProgram(this.glProgram);
+      }
+
+      static create(
+        gl: Ctx,
+        vertSource: Shader.Source,
+        fragSource: Shader.Source
+      ) {
+        const program = Result.unwrap(
+          Shader.Utils.createProgram(gl, vertSource, fragSource)
+        );
+        return new Program(gl, program);
       }
 
       addVertexAttribArray(attribName: string, buf: Buffer) {
@@ -298,6 +328,12 @@ namespace Game {
         );
         this.gl.enableVertexAttribArray(location);
       }
+
+      getUniform(name: string) {
+        this.use();
+        const uniformLoc = this.gl.getUniformLocation(this.glProgram, name);
+        return new Uniform(this.gl, uniformLoc);
+      }
     }
   }
 
@@ -308,12 +344,16 @@ namespace Game {
     canvas.height = window.devicePixelRatio * window.innerHeight;
 
     const gl = canvas.getContext("webgl");
-    const program = Result.unwrap(
-      Shader.Utils.createProgram(gl, Shader.Color.vert, Shader.Color.frag)
-    );
 
-    const glowProgram = Result.unwrap(
-      Shader.Utils.createProgram(gl, Shader.Glow.vert, Shader.Glow.frag)
+    const triProgram = WebGL.Program.create(
+      gl,
+      Shader.Color.vert,
+      Shader.Color.frag
+    );
+    const glowProgram = WebGL.Program.create(
+      gl,
+      Shader.Glow.vert,
+      Shader.Glow.frag
     );
 
     const triBuffer = new WebGL.Buffer(gl, "float", 2);
@@ -329,14 +369,11 @@ namespace Game {
     );
     firstPassTarget.use();
 
-    const attribLocation = gl.getAttribLocation(program, "position");
-    gl.vertexAttribPointer(attribLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.enableVertexAttribArray(attribLocation);
+    triProgram.addVertexAttribArray("position", triBuffer);
+    triProgram.use();
 
-    gl.useProgram(program);
-
-    const uScale = gl.getUniformLocation(program, "uScale");
-    gl.uniform1f(uScale, 0.2);
+    const uScale = triProgram.getUniform("uScale");
+    uScale.set1f(0.2);
 
     // FIRST PASS - Raw game
 
@@ -352,29 +389,23 @@ namespace Game {
     const quadBuffer = new WebGL.Buffer(gl, "float", 2);
     quadBuffer.set(WebGL.createQuad(-1, -1, 1, 1).arr);
 
-    gl.useProgram(glowProgram);
+    glowProgram.use();
 
-    const quadAttribLocation = gl.getAttribLocation(glowProgram, "position");
-    gl.vertexAttribPointer(quadAttribLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.enableVertexAttribArray(quadAttribLocation);
+    glowProgram.addVertexAttribArray("position", quadBuffer);
 
     const texQuadBuffer = new WebGL.Buffer(gl, "float", 2);
     texQuadBuffer.set(WebGL.createQuad(0, 0, 1, 1).arr);
 
-    const texQuadAttribLocation = gl.getAttribLocation(
-      glowProgram,
-      "aTexCoord"
-    );
-    gl.vertexAttribPointer(texQuadAttribLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.enableVertexAttribArray(texQuadAttribLocation);
+    glowProgram.addVertexAttribArray("aTexCoord", texQuadBuffer);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, firstPassTarget.texture);
-    const uTexLoc = gl.getUniformLocation(glowProgram, "uSourceImage");
-    gl.uniform1i(uTexLoc, 0);
 
-    const uResolution = gl.getUniformLocation(glowProgram, "uResolution");
-    gl.uniform2f(uResolution, canvas.width, canvas.height);
+    const uTexLoc = glowProgram.getUniform("uSourceImage");
+    uTexLoc.set1i(0);
+
+    const uResolution = glowProgram.getUniform("uResolution");
+    uResolution.set2f(canvas.width, canvas.height);
 
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
