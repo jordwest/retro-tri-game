@@ -596,8 +596,8 @@ namespace Game {
     export type EntityId = number & { __entityId: never };
     export type T = {
       nextId: EntityId;
-      playerId: EntityId;
       keys: Map<string, boolean>;
+      players: Map<EntityId, boolean>;
       firingRate: Map<EntityId, FiringRate.C>;
       positions: Map<EntityId, Vec2.T>;
       shootable: Map<EntityId, boolean>;
@@ -628,15 +628,17 @@ namespace Game {
       return v;
     }
 
-    export function addPlayer(state: T, id: EntityId) {
+    export function addPlayer(state: T) {
+      const id = getId(state);
       state.renderables.set(id, { type: "player" });
       state.headings.set(id, 0);
       state.firingRate.set(id, { timeRemain: 0, timeTotal: 0.3 });
       state.shootable.set(id, true);
+      state.players.set(id, true);
       state.positions.set(id, { x: 0.0, y: -0.8 });
     }
 
-    export function addEnemy(state: T, x: number) {
+    export function addEnemy(state: T) {
       const id = getId(state);
       state.renderables.set(id, { type: "enemy" });
       state.headings.set(id, Math.PI);
@@ -645,7 +647,10 @@ namespace Game {
         timeTotal: 0.8 + Math.random() * 0.4,
         timeRemain: 1.0 + Math.random()
       });
-      state.positions.set(id, { x, y: 0.8 });
+      state.positions.set(id, {
+        x: -0.8 + Math.random() * 1.8,
+        y: 1.0 + Math.random() * 0.8
+      });
     }
 
     export function addExplosion(state: T, pos: Vec2.T) {
@@ -680,10 +685,9 @@ namespace Game {
 
     export function create(): T {
       const state: T = {
-        nextId: 1 as EntityId,
-        playerId: 0 as EntityId,
+        nextId: 0 as EntityId,
         keys: new Map(),
-        // players: new Map(),
+        players: new Map(),
         positions: new Map(),
         firingRate: new Map(),
         renderables: new Map(),
@@ -694,7 +698,6 @@ namespace Game {
         damping: new Map(),
         dead: new Map()
       };
-      addPlayer(state, 0 as EntityId);
       return state;
     }
 
@@ -754,13 +757,21 @@ namespace Game {
             state.renderables.get(id).type === "enemy"
           ) {
             const pos = state.positions.get(id);
-            addBullet(state, { x: pos.x, y: pos.y - 0.1 }, Math.PI);
-            v.timeRemain = v.timeTotal;
+            if (pos.y <= 0.8) {
+              // Check we're on screen before shooting
+              addBullet(state, { x: pos.x, y: pos.y - 0.1 }, Math.PI);
+              v.timeRemain = v.timeTotal;
+            }
           }
         });
 
         state.shootable.forEach((s, sid) => {
           const shootablePos = state.positions.get(sid);
+
+          if (shootablePos.y > 0.8) {
+            // Off screen, slowly move on screen
+            shootablePos.y = shootablePos.y - 0.2 * time;
+          }
           state.renderables.forEach((r, rid) => {
             const bulletPos = state.positions.get(rid);
             if (r.type === "bullet") {
@@ -776,30 +787,37 @@ namespace Game {
           });
         });
 
+        if (state.shootable.size <= 4) {
+          Game.State.addEnemy(state);
+        }
+
         const moveSpeed = 0.8;
-        if (state.keys.get("ArrowLeft") === true) {
-          const player = state.positions.get(state.playerId);
-          player.x -= moveSpeed * time;
-        }
-        if (state.keys.get("ArrowRight") === true) {
-          const player = state.positions.get(state.playerId);
-          player.x += moveSpeed * time;
-        }
-        if (state.keys.get("x") === true) {
-          const firingRate = state.firingRate.get(state.playerId);
-          if (firingRate && firingRate.timeRemain > 0) {
-            // Not ready yet
-          } else {
-            if (firingRate) {
-              firingRate.timeRemain = firingRate.timeTotal;
-            }
-            addBullet(
-              state,
-              state.positions.get(state.playerId),
-              state.headings.get(state.playerId)
-            );
+        state.players.forEach((player, playerId) => {
+          if (state.keys.get("ArrowLeft") === true) {
+            const player = state.positions.get(playerId);
+            player.x -= moveSpeed * time;
           }
-        }
+          if (state.keys.get("ArrowRight") === true) {
+            const player = state.positions.get(playerId);
+            player.x += moveSpeed * time;
+          }
+          if (state.keys.get("x") === true) {
+            const firingRate = state.firingRate.get(playerId);
+            if (firingRate && firingRate.timeRemain > 0) {
+              // Not ready yet
+            } else {
+              if (firingRate) {
+                firingRate.timeRemain = firingRate.timeTotal;
+              }
+              const position = state.positions.get(playerId);
+              addBullet(
+                state,
+                { x: position.x, y: position.y + 0.11 },
+                state.headings.get(playerId)
+              );
+            }
+          }
+        });
       }
 
       export function cleanup(state: T) {
@@ -814,6 +832,7 @@ namespace Game {
           state.lifetimes.delete(id);
           state.velocities.delete(id);
           state.headings.delete(id);
+          state.players.delete(id);
           state.damping.delete(id);
           state.positions.delete(id);
           state.shootable.delete(id);
@@ -894,11 +913,7 @@ namespace Game {
     canvas.height = window.innerHeight;
 
     const gameState = Game.State.create();
-    // Game.State.addExplosion(gameState, { x: -0.8, y: 0 });
-    Game.State.addEnemy(gameState, -0.8);
-    Game.State.addEnemy(gameState, -0.2);
-    Game.State.addEnemy(gameState, 0.3);
-    Game.State.addEnemy(gameState, 0.7);
+    Game.State.addPlayer(gameState);
     const handledKeys = ["ArrowLeft", "ArrowRight", "x"];
     document.addEventListener("keydown", e => {
       if (handledKeys.includes(e.key)) {
