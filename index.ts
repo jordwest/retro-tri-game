@@ -669,7 +669,7 @@ namespace Game {
       state.powerups.set(id, powerupType);
       state.velocities.set(id, {
         x: 0,
-        y: -0.03
+        y: -0.3
       });
     }
 
