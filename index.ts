@@ -81,17 +81,23 @@ namespace Game {
                 attribute vec2 position;
                 uniform float uScale;
                 uniform vec2 uPosition;
+                uniform vec2 uRotation;
 
                 void main() {
-                    gl_Position = vec4((position + uPosition) * uScale, 0.0, 1.0);
+                    vec2 scaledPos = position * uScale;
+                    vec2 rotatedPos = vec2(
+                      scaledPos.x * uRotation.y + scaledPos.y * uRotation.x,
+                      scaledPos.y * uRotation.y - scaledPos.x * uRotation.x
+                    );
+                    gl_Position = vec4(rotatedPos + uPosition, 0.0, 1.0);
                 }
             ` as Shader.Source;
 
       export const frag = `
                 precision mediump float;
-                uniform vec3 uColor;
+                uniform vec4 uColor;
                 void main() {
-                    gl_FragColor = vec4(uColor, 1.0);
+                    gl_FragColor = vec4(uColor);
                 }
             ` as Shader.Source;
     }
@@ -120,7 +126,7 @@ namespace Game {
                   vec3 srcCol = texture2D(uSourceImage, texCoord).xyz;
                   vec3 glowCol = texture2D(uBlurImage, texCoord).xyz;
 
-                  float scanline = 0.9 + (0.1 * sin(gl_FragCoord.y));
+                  float scanline = 0.9 + (0.1 * sin(gl_FragCoord.y * 2.0));
 
                   vec3 outCol = (srcCol + (glowCol * 0.3));
                   outCol = vec3(min(outCol.r, 1.0), min(outCol.g, 1.0), min(outCol.b, 1.0));
@@ -151,7 +157,7 @@ namespace Game {
                 varying vec2 texCoord;
 
                 void main() {
-                  const int kernelHalfWidth = 21;
+                  const int kernelHalfWidth = 12;
 
                   vec3 srcCol = texture2D(uSourceImage, texCoord).xyz;
                   vec3 outCol = vec3(0.0, 0.0, 0.0);
@@ -367,6 +373,10 @@ namespace Game {
       set3f(x: number, y: number, z: number) {
         this.gl.uniform3f(this.loc, x, y, z);
       }
+
+      set4f(x: number, y: number, z: number, w: number) {
+        this.gl.uniform4f(this.loc, x, y, z, w);
+      }
     }
 
     export class Program {
@@ -460,16 +470,19 @@ namespace Game {
       render(opts: {
         scale: number;
         position: { x: number; y: number };
-        color: { r: number; g: number; b: number };
+        rotation: number;
+        color: { r: number; g: number; b: number; a: number };
       }) {
         this.program.use();
         this.program.addVertexAttribArray("position", this.triBuffer);
         const uScale = this.program.getUniform("uScale");
         uScale.set1f(opts.scale);
         const uColor = this.program.getUniform("uColor");
-        uColor.set3f(opts.color.r, opts.color.g, opts.color.b);
+        uColor.set4f(opts.color.r, opts.color.g, opts.color.b, opts.color.a);
         const uPosition = this.program.getUniform("uPosition");
         uPosition.set2f(opts.position.x, opts.position.y);
+        const uRotation = this.program.getUniform("uRotation");
+        uRotation.set2f(Math.sin(opts.rotation), Math.cos(opts.rotation));
         this.gl.drawArrays(GL.TRIANGLES, 0, this.triBuffer.components);
       }
     }
@@ -579,48 +592,251 @@ namespace Game {
     }
   }
 
+  export namespace State {
+    export type EntityId = number & { __entityId: never };
+    export type T = {
+      nextId: EntityId;
+      positions: Map<EntityId, Vec2.T>;
+      velocities: Map<EntityId, Vec2.T>;
+      headings: Map<EntityId, number>;
+      damping: Map<EntityId, number>;
+      renderables: Map<EntityId, Renderable.C>;
+      lifetimes: Map<EntityId, Lifetime.C>;
+      dead: Map<EntityId, boolean>;
+    };
+
+    export function checkEntityExists<T>(
+      id: EntityId,
+      desc: string,
+      v: T | undefined | null
+    ): T {
+      if (v == null) {
+        console.error(
+          "Expected to find entity with id",
+          id,
+          " for ",
+          desc,
+          ", got",
+          v
+        );
+        throw new Error("Assertion failed");
+      }
+      return v;
+    }
+
+    export function addPlayer(state: T) {
+      let id = getId(state);
+      state.renderables.set(id, { type: "player" });
+      state.headings.set(id, 0);
+      state.positions.set(id, { x: 0.0, y: 0.5 });
+    }
+
+    export function addExplosion(state: T, pos: Vec2.T) {
+      for (let i = 0; i < 200; i++) {
+        addParticle(state, pos);
+      }
+    }
+
+    export function addParticle(state: T, pos: Vec2.T) {
+      let id = getId(state);
+      state.renderables.set(id, { type: "particle" });
+      state.positions.set(id, { ...pos });
+      state.headings.set(id, Math.random() * Math.PI * 2);
+      state.lifetimes.set(id, { age: 0, lifespan: 2 });
+      state.velocities.set(id, {
+        x: -1.5 + Math.random() * 3.0,
+        y: -1.5 + Math.random() * 3.0
+      });
+      state.damping.set(id, 1.5 + Math.random() * 3.0);
+    }
+
+    export function create(): T {
+      const state: T = {
+        nextId: 0 as EntityId,
+        positions: new Map(),
+        renderables: new Map(),
+        lifetimes: new Map(),
+        headings: new Map(),
+        velocities: new Map(),
+        damping: new Map(),
+        dead: new Map()
+      };
+      return state;
+    }
+    export function getId(state: T): EntityId {
+      const nextId = state.nextId;
+      state.nextId++;
+      return nextId;
+    }
+
+    export namespace Renderable {
+      export type C =
+        | { type: "player" }
+        | { type: "enemy" }
+        | { type: "particle" };
+    }
+    export namespace Lifetime {
+      export type C = { age: number; lifespan: number };
+    }
+
+    export namespace Systems {
+      export function tick(state: T, time: number) {
+        state.lifetimes.forEach((l, entityId) => {
+          l.age += time;
+          if (l.age > l.lifespan) {
+            state.dead.set(entityId, true);
+          }
+        });
+
+        state.velocities.forEach((v, entityID) => {
+          let position = checkEntityExists(
+            entityID,
+            "position for velocity",
+            state.positions.get(entityID)
+          );
+          let damping = state.damping.get(entityID);
+
+          position.x += v.x * time;
+          position.y += v.y * time;
+          if (damping != null) {
+            v.x = v.x * (1 - damping * time);
+            v.y = v.y * (1 - damping * time);
+          }
+        });
+      }
+
+      export function cleanup(state: T) {
+        let cleanupIds: EntityId[] = [];
+        state.dead.forEach((isDead, id) => {
+          if (isDead == true) {
+            cleanupIds.push(id);
+          }
+        });
+        cleanupIds.forEach(id => {
+          state.renderables.delete(id);
+          state.lifetimes.delete(id);
+          state.velocities.delete(id);
+          state.headings.delete(id);
+          state.damping.delete(id);
+          state.positions.delete(id);
+          state.dead.delete(id);
+        });
+      }
+
+      export function render(state: T, triRenderer: Renderers.Triangle) {
+        state.renderables.forEach((renderable, entityId) => {
+          const pos = checkEntityExists(
+            entityId,
+            "position for renderable",
+            state.positions.get(entityId)
+          );
+          const rotation = checkEntityExists(
+            entityId,
+            "heading for renderable",
+            state.headings.get(entityId)
+          );
+          switch (renderable.type) {
+            case "player":
+              triRenderer.render({
+                scale: 0.03 + Math.random() * 0.01,
+                position: { x: pos.x, y: pos.y - 0.1 },
+                rotation: rotation + Math.PI,
+                color: { r: 1, g: 1, b: 0, a: 1 }
+              });
+              triRenderer.render({
+                scale: 0.08,
+                position: pos,
+                rotation,
+                color: { r: 0, g: 0, b: 1, a: 1 }
+              });
+              break;
+            case "enemy":
+              triRenderer.render({
+                scale: 0.2,
+                position: pos,
+                rotation,
+                color: { r: 1, g: 0, b: 0, a: 1 }
+              });
+              break;
+            case "particle":
+              const lifetime = checkEntityExists(
+                entityId,
+                "lifetime for renderable particle",
+                state.lifetimes.get(entityId)
+              );
+              const color = 1.0 - lifetime.age / lifetime.lifespan;
+              triRenderer.render({
+                scale: 0.03,
+                position: pos,
+                rotation,
+                color: { r: color, g: color, b: color, a: color }
+              });
+              break;
+          }
+        });
+      }
+    }
+  }
+
   export function main() {
     const canvas = document.getElementById("game") as HTMLCanvasElement;
 
-    canvas.width = window.devicePixelRatio * window.innerWidth;
-    canvas.height = window.devicePixelRatio * window.innerHeight;
+    // canvas.width = window.devicePixelRatio * window.innerWidth;
+    // canvas.height = window.devicePixelRatio * window.innerHeight;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-    const gl = canvas.getContext("webgl");
+    const gameState = Game.State.create();
+    Game.State.addPlayer(gameState);
+    Game.State.addExplosion(gameState, { x: -0.8, y: 0 });
+
+    const gl = canvas.getContext("webgl", {
+      alpha: false,
+      premultipliedAlpha: false
+    });
     const triangleRenderer = new Renderers.Triangle(gl);
     const glowRenderer = new Renderers.Glow(gl);
 
-    const baseRenderTarget = WebGL.RenderTarget.create(
-      gl,
-      canvas.width,
-      canvas.height
-    );
+    let lastT = undefined;
+    const animationFrame = (t: number) => {
+      if (lastT == null) {
+        lastT = t;
+        requestAnimationFrame(animationFrame);
+        return;
+      }
 
-    baseRenderTarget.with(() => {
+      const dt = (t - lastT) / 1000;
+
+      const baseRenderTarget = WebGL.RenderTarget.create(
+        gl,
+        canvas.width,
+        canvas.height
+      );
+
+      // baseRenderTarget.with(() => {
+      gl.blendFunc(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA);
+      gl.blendFunc(GL.ONE, GL.ONE_MINUS_SRC_ALPHA);
       WebGL.clear(gl);
-      triangleRenderer.render({
-        scale: 0.3,
-        color: { r: 1, g: 0, b: 0 },
-        position: { x: -0.8, y: 0.3 }
-      });
-      triangleRenderer.render({
-        scale: 0.3,
-        color: { r: 0, g: 0, b: 1 },
-        position: { x: 0.8, y: 0.2 }
-      });
-      triangleRenderer.render({
-        scale: 0.3,
-        color: { r: 0, g: 1, b: 0 },
-        position: { x: 0.0, y: 0.6 }
-      });
-    });
 
-    WebGL.clear(gl);
+      Game.State.Systems.cleanup(gameState);
+      Game.State.Systems.tick(gameState, dt);
+      Game.State.Systems.render(gameState, triangleRenderer);
+      // });
 
-    const { width, height } = canvas;
-    glowRenderer.render({
-      srcTexture: baseRenderTarget.texture,
-      resolution: { width, height }
-    });
+      // WebGL.clear(gl);
+
+      // const { width, height } = canvas;
+      // glowRenderer.render({
+      //   srcTexture: baseRenderTarget.texture,
+      //   resolution: { width, height }
+      // });
+
+      lastT = t;
+      requestAnimationFrame(animationFrame);
+    };
+
+    // Start everything
+    requestAnimationFrame(animationFrame);
   }
 }
 
