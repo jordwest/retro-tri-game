@@ -181,6 +181,9 @@ namespace Game {
       y: number;
     };
 
+    export const distance = (a: T, b: T) =>
+      Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+
     export class FloatArray {
       public arr: Float32Array;
       constructor(size: number) {
@@ -603,6 +606,7 @@ namespace Game {
       positions: Map<EntityId, Vec2.T>;
       enemy: Map<EntityId, boolean>;
       velocities: Map<EntityId, Vec2.T>;
+      powerups: Map<EntityId, "trigun" | "health" | "healthupgrade">;
       headings: Map<EntityId, number>;
       damping: Map<EntityId, number>;
       renderables: Map<EntityId, Renderable.C>;
@@ -634,7 +638,7 @@ namespace Game {
       state.renderables.set(id, { type: "player" });
       state.headings.set(id, 0);
       state.firingRate.set(id, { timeRemain: 0, timeTotal: 0.3 });
-      state.players.set(id, { health: 5 });
+      state.players.set(id, { health: 5, maxHealth: 5, trigunPowerup: false });
       state.positions.set(id, { x: 0.0, y: -0.8 });
     }
 
@@ -650,6 +654,22 @@ namespace Game {
       state.positions.set(id, {
         x: -0.8 + Math.random() * 1.8,
         y: 1.0 + Math.random() * 0.8
+      });
+    }
+
+    export function addPowerup(
+      state: T,
+      pos: Vec2.T,
+      powerupType: "trigun" | "health" | "healthupgrade"
+    ) {
+      let id = getId(state);
+      state.renderables.set(id, { type: "powerup" });
+      state.positions.set(id, { ...pos });
+      state.headings.set(id, 0);
+      state.powerups.set(id, powerupType);
+      state.velocities.set(id, {
+        x: 0,
+        y: -0.03
       });
     }
 
@@ -675,7 +695,7 @@ namespace Game {
       state.renderables.set(id, { type: "particle" });
       state.positions.set(id, { ...pos });
       state.headings.set(id, Math.random() * Math.PI * 2);
-      state.lifetimes.set(id, { age: 0, lifespan: 2 });
+      state.lifetimes.set(id, { age: 0, lifespan: 0.6 });
       state.velocities.set(id, {
         x: -1.5 + Math.random() * 3.0,
         y: -1.5 + Math.random() * 3.0
@@ -690,6 +710,7 @@ namespace Game {
         keys: new Map(),
         players: new Map(),
         positions: new Map(),
+        powerups: new Map(),
         firingRate: new Map(),
         renderables: new Map(),
         enemy: new Map(),
@@ -713,6 +734,7 @@ namespace Game {
         | { type: "player" }
         | { type: "enemy" }
         | { type: "bullet" }
+        | { type: "powerup" }
         | { type: "particle" };
     }
 
@@ -726,6 +748,8 @@ namespace Game {
 
     export type Player = {
       health: number;
+      maxHealth: number;
+      trigunPowerup: boolean;
     };
 
     export namespace Systems {
@@ -780,21 +804,31 @@ namespace Game {
           state.renderables.forEach((r, rid) => {
             const bulletPos = state.positions.get(rid);
             if (r.type === "bullet") {
-              const dist = Math.sqrt(
-                Math.pow(enemyPos.x - bulletPos.x, 2) +
-                  Math.pow(enemyPos.y - bulletPos.y, 2)
-              );
+              const dist = Vec2.distance(enemyPos, bulletPos);
               if (dist < 0.05) {
                 state.score += 10;
                 document.getElementById(
                   "score"
                 ).innerText = state.score.toString();
                 state.dead.set(sid, true);
+                const rand = Math.random();
+                if (rand > 0.9) {
+                  addPowerup(state, enemyPos, "trigun");
+                } else if (rand > 0.8) {
+                  addPowerup(state, enemyPos, "healthupgrade");
+                } else if (rand > 0.7) {
+                  addPowerup(state, enemyPos, "health");
+                }
                 addExplosion(state, enemyPos);
               }
             }
           });
         });
+
+        // let targetEnemies = 4;
+        // if () {
+
+        // }
 
         if (state.enemy.size <= 4) {
           Game.State.addEnemy(state);
@@ -803,6 +837,26 @@ namespace Game {
         const moveSpeed = 1.2;
         state.players.forEach((player, playerId) => {
           const playerPos = state.positions.get(playerId);
+
+          state.powerups.forEach((powerupType, powerupId) => {
+            const powerupPos = state.positions.get(powerupId);
+            if (Vec2.distance(playerPos, powerupPos) < 0.05) {
+              state.dead.set(powerupId, true);
+              switch (powerupType) {
+                case "trigun":
+                  player.trigunPowerup = true;
+                  break;
+                case "health":
+                  player.health = Math.min(player.health + 1, player.maxHealth);
+                  break;
+                case "healthupgrade":
+                  player.maxHealth = Math.min(player.maxHealth + 1, 10);
+                  player.health = player.maxHealth;
+                  break;
+              }
+            }
+          });
+
           if (
             state.keys.get("ArrowUp") === true ||
             state.keys.get("w") === true
@@ -836,6 +890,19 @@ namespace Game {
                 firingRate.timeRemain = firingRate.timeTotal;
               }
               const position = state.positions.get(playerId);
+              const playerHeading = state.headings.get(playerId);
+              if (player.trigunPowerup) {
+                addBullet(
+                  state,
+                  { x: position.x + 0.03, y: position.y + 0.11 },
+                  playerHeading - 0.15
+                );
+                addBullet(
+                  state,
+                  { x: position.x - 0.03, y: position.y + 0.11 },
+                  playerHeading + 0.15
+                );
+              }
               addBullet(
                 state,
                 { x: position.x, y: position.y + 0.11 },
@@ -881,6 +948,7 @@ namespace Game {
           state.headings.delete(id);
           state.players.delete(id);
           state.damping.delete(id);
+          state.powerups.delete(id);
           state.positions.delete(id);
           state.enemy.delete(id);
           state.firingRate.delete(id);
@@ -891,7 +959,7 @@ namespace Game {
       export function render(state: T, triRenderer: Renderers.Triangle) {
         state.players.forEach(player => {
           // Draw health bar first
-          for (let i = 1; i <= 5; i++) {
+          for (let i = 1; i <= player.maxHealth; i++) {
             const col =
               player.health >= i
                 ? { r: 1, g: 0, b: 0, a: 1 }
@@ -945,6 +1013,34 @@ namespace Game {
                 rotation,
                 color: { r: 1, g: 1, b: 1, a: 1 }
               });
+              break;
+            case "powerup":
+              const powerupType = state.powerups.get(entityId);
+              triRenderer.render({
+                scale: 0.04,
+                position: pos,
+                rotation,
+                color: { r: 0, g: 0, b: 1, a: 1 }
+              });
+              switch (powerupType) {
+                case "healthupgrade":
+                case "health":
+                  triRenderer.render({
+                    scale: 0.01,
+                    position: pos,
+                    rotation: rotation + Math.PI,
+                    color: { r: 1, g: 0, b: 0, a: 1 }
+                  });
+                  break;
+                case "trigun":
+                  triRenderer.render({
+                    scale: 0.01,
+                    position: pos,
+                    rotation: rotation + Math.PI,
+                    color: { r: 1, g: 1, b: 1, a: 1 }
+                  });
+                  break;
+              }
               break;
             case "particle":
               const lifetime = checkEntityExists(
