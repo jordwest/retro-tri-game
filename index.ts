@@ -596,6 +596,9 @@ namespace Game {
     export type EntityId = number & { __entityId: never };
     export type T = {
       nextId: EntityId;
+      playerId: EntityId;
+      keys: Map<string, boolean>;
+      firingRate: Map<EntityId, FiringRate.C>;
       positions: Map<EntityId, Vec2.T>;
       velocities: Map<EntityId, Vec2.T>;
       headings: Map<EntityId, number>;
@@ -624,17 +627,36 @@ namespace Game {
       return v;
     }
 
-    export function addPlayer(state: T) {
-      let id = getId(state);
+    export function addPlayer(state: T, id: EntityId) {
       state.renderables.set(id, { type: "player" });
       state.headings.set(id, 0);
-      state.positions.set(id, { x: 0.0, y: 0.5 });
+      state.firingRate.set(id, { timeRemain: 0, timeTotal: 0.3 });
+      state.positions.set(id, { x: 0.0, y: -0.8 });
+    }
+
+    export function addEnemy(state: T, x: number) {
+      const id = getId(state);
+      state.renderables.set(id, { type: "enemy" });
+      state.headings.set(id, Math.PI);
+      state.firingRate.set(id, { timeRemain: 1, timeTotal: 0.6 });
+      state.positions.set(id, { x, y: 0.8 });
     }
 
     export function addExplosion(state: T, pos: Vec2.T) {
       for (let i = 0; i < 200; i++) {
         addParticle(state, pos);
       }
+    }
+
+    export function addBullet(state: T, pos: Vec2.T, heading: number) {
+      let id = getId(state);
+      state.renderables.set(id, { type: "bullet" });
+      state.positions.set(id, { ...pos });
+      state.headings.set(id, heading);
+      state.velocities.set(id, {
+        x: Math.cos(heading + Math.PI / 2) * 1.8,
+        y: Math.sin(heading + Math.PI / 2) * 1.8
+      });
     }
 
     export function addParticle(state: T, pos: Vec2.T) {
@@ -652,8 +674,11 @@ namespace Game {
 
     export function create(): T {
       const state: T = {
-        nextId: 0 as EntityId,
+        nextId: 1 as EntityId,
+        playerId: 0 as EntityId,
+        keys: new Map(),
         positions: new Map(),
+        firingRate: new Map(),
         renderables: new Map(),
         lifetimes: new Map(),
         headings: new Map(),
@@ -661,8 +686,10 @@ namespace Game {
         damping: new Map(),
         dead: new Map()
       };
+      addPlayer(state, 0 as EntityId);
       return state;
     }
+
     export function getId(state: T): EntityId {
       const nextId = state.nextId;
       state.nextId++;
@@ -673,10 +700,16 @@ namespace Game {
       export type C =
         | { type: "player" }
         | { type: "enemy" }
+        | { type: "bullet" }
         | { type: "particle" };
     }
+
     export namespace Lifetime {
       export type C = { age: number; lifespan: number };
+    }
+
+    export namespace FiringRate {
+      export type C = { timeRemain: number; timeTotal: number };
     }
 
     export namespace Systems {
@@ -703,6 +736,36 @@ namespace Game {
             v.y = v.y * (1 - damping * time);
           }
         });
+
+        state.firingRate.forEach(v => {
+          // Don't let it go below zero
+          v.timeRemain = Math.max(v.timeRemain - time, 0);
+        });
+
+        const moveSpeed = 0.8;
+        if (state.keys.get("ArrowLeft") === true) {
+          const player = state.positions.get(state.playerId);
+          player.x -= moveSpeed * time;
+        }
+        if (state.keys.get("ArrowRight") === true) {
+          const player = state.positions.get(state.playerId);
+          player.x += moveSpeed * time;
+        }
+        if (state.keys.get("x") === true) {
+          const firingRate = state.firingRate.get(state.playerId);
+          if (firingRate && firingRate.timeRemain > 0) {
+            // Not ready yet
+          } else {
+            if (firingRate) {
+              firingRate.timeRemain = firingRate.timeTotal;
+            }
+            addBullet(
+              state,
+              state.positions.get(state.playerId),
+              state.headings.get(state.playerId)
+            );
+          }
+        }
       }
 
       export function cleanup(state: T) {
@@ -752,10 +815,18 @@ namespace Game {
               break;
             case "enemy":
               triRenderer.render({
-                scale: 0.2,
+                scale: 0.05,
                 position: pos,
                 rotation,
                 color: { r: 1, g: 0, b: 0, a: 1 }
+              });
+              break;
+            case "bullet":
+              triRenderer.render({
+                scale: 0.03,
+                position: pos,
+                rotation,
+                color: { r: 1, g: 1, b: 1, a: 1 }
               });
               break;
             case "particle":
@@ -787,8 +858,26 @@ namespace Game {
     canvas.height = window.innerHeight;
 
     const gameState = Game.State.create();
-    Game.State.addPlayer(gameState);
-    Game.State.addExplosion(gameState, { x: -0.8, y: 0 });
+    // Game.State.addExplosion(gameState, { x: -0.8, y: 0 });
+    Game.State.addEnemy(gameState, -0.8);
+    Game.State.addEnemy(gameState, -0.2);
+    Game.State.addEnemy(gameState, 0.3);
+    Game.State.addEnemy(gameState, 0.7);
+    const handledKeys = ["ArrowLeft", "ArrowRight", "x"];
+    document.addEventListener("keydown", e => {
+      if (handledKeys.includes(e.key)) {
+        e.preventDefault();
+        gameState.keys.set(e.key, true);
+      } else {
+        console.log("unhandled key", e.key);
+      }
+    });
+    document.addEventListener("keyup", e => {
+      if (handledKeys.includes(e.key)) {
+        e.preventDefault();
+        gameState.keys.set(e.key, false);
+      }
+    });
 
     const gl = canvas.getContext("webgl", {
       alpha: false,
