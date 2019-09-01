@@ -600,6 +600,7 @@ namespace Game {
       keys: Map<string, boolean>;
       firingRate: Map<EntityId, FiringRate.C>;
       positions: Map<EntityId, Vec2.T>;
+      shootable: Map<EntityId, boolean>;
       velocities: Map<EntityId, Vec2.T>;
       headings: Map<EntityId, number>;
       damping: Map<EntityId, number>;
@@ -638,6 +639,7 @@ namespace Game {
       const id = getId(state);
       state.renderables.set(id, { type: "enemy" });
       state.headings.set(id, Math.PI);
+      state.shootable.set(id, true);
       state.firingRate.set(id, { timeRemain: 1, timeTotal: 0.6 });
       state.positions.set(id, { x, y: 0.8 });
     }
@@ -680,6 +682,7 @@ namespace Game {
         positions: new Map(),
         firingRate: new Map(),
         renderables: new Map(),
+        shootable: new Map(),
         lifetimes: new Map(),
         headings: new Map(),
         velocities: new Map(),
@@ -742,6 +745,23 @@ namespace Game {
           v.timeRemain = Math.max(v.timeRemain - time, 0);
         });
 
+        state.shootable.forEach((s, sid) => {
+          const shootablePos = state.positions.get(sid);
+          state.renderables.forEach((r, rid) => {
+            const bulletPos = state.positions.get(rid);
+            if (r.type === "bullet") {
+              const dist = Math.sqrt(
+                Math.pow(shootablePos.x - bulletPos.x, 2) +
+                  Math.pow(shootablePos.y - bulletPos.y, 2)
+              );
+              if (dist < 0.05) {
+                state.dead.set(sid, true);
+                addExplosion(state, shootablePos);
+              }
+            }
+          });
+        });
+
         const moveSpeed = 0.8;
         if (state.keys.get("ArrowLeft") === true) {
           const player = state.positions.get(state.playerId);
@@ -782,6 +802,8 @@ namespace Game {
           state.headings.delete(id);
           state.damping.delete(id);
           state.positions.delete(id);
+          state.shootable.delete(id);
+          state.firingRate.delete(id);
           state.dead.delete(id);
         });
       }
