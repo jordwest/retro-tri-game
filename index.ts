@@ -968,23 +968,23 @@ namespace Game {
         canvas.height
       );
 
-      // baseRenderTarget.with(() => {
-      gl.blendFunc(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA);
-      gl.blendFunc(GL.ONE, GL.ONE_MINUS_SRC_ALPHA);
+      baseRenderTarget.with(() => {
+        gl.blendFunc(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA);
+        gl.blendFunc(GL.ONE, GL.ONE_MINUS_SRC_ALPHA);
+        WebGL.clear(gl);
+
+        Game.State.Systems.cleanup(gameState);
+        Game.State.Systems.tick(gameState, dt);
+        Game.State.Systems.render(gameState, triangleRenderer);
+      });
+
       WebGL.clear(gl);
 
-      Game.State.Systems.cleanup(gameState);
-      Game.State.Systems.tick(gameState, dt);
-      Game.State.Systems.render(gameState, triangleRenderer);
-      // });
-
-      // WebGL.clear(gl);
-
-      // const { width, height } = canvas;
-      // glowRenderer.render({
-      //   srcTexture: baseRenderTarget.texture,
-      //   resolution: { width, height }
-      // });
+      const { width, height } = canvas;
+      glowRenderer.render({
+        srcTexture: baseRenderTarget.texture,
+        resolution: { width, height }
+      });
 
       lastT = t;
       requestAnimationFrame(animationFrame);
