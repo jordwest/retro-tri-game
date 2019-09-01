@@ -598,10 +598,10 @@ namespace Game {
       nextId: EntityId;
       keys: Map<string, boolean>;
       score: number;
-      players: Map<EntityId, boolean>;
+      players: Map<EntityId, Player>;
       firingRate: Map<EntityId, FiringRate.C>;
       positions: Map<EntityId, Vec2.T>;
-      shootable: Map<EntityId, boolean>;
+      enemy: Map<EntityId, boolean>;
       velocities: Map<EntityId, Vec2.T>;
       headings: Map<EntityId, number>;
       damping: Map<EntityId, number>;
@@ -634,8 +634,7 @@ namespace Game {
       state.renderables.set(id, { type: "player" });
       state.headings.set(id, 0);
       state.firingRate.set(id, { timeRemain: 0, timeTotal: 0.3 });
-      state.shootable.set(id, true);
-      state.players.set(id, true);
+      state.players.set(id, { health: 5 });
       state.positions.set(id, { x: 0.0, y: -0.8 });
     }
 
@@ -643,7 +642,7 @@ namespace Game {
       const id = getId(state);
       state.renderables.set(id, { type: "enemy" });
       state.headings.set(id, Math.PI);
-      state.shootable.set(id, true);
+      state.enemy.set(id, true);
       state.firingRate.set(id, {
         timeTotal: 0.8 + Math.random() * 0.4,
         timeRemain: 1.0 + Math.random()
@@ -654,8 +653,8 @@ namespace Game {
       });
     }
 
-    export function addExplosion(state: T, pos: Vec2.T) {
-      for (let i = 0; i < 200; i++) {
+    export function addExplosion(state: T, pos: Vec2.T, count: number = 200) {
+      for (let i = 0; i < count; i++) {
         addParticle(state, pos);
       }
     }
@@ -693,7 +692,7 @@ namespace Game {
         positions: new Map(),
         firingRate: new Map(),
         renderables: new Map(),
-        shootable: new Map(),
+        enemy: new Map(),
         lifetimes: new Map(),
         headings: new Map(),
         velocities: new Map(),
@@ -724,6 +723,10 @@ namespace Game {
     export namespace FiringRate {
       export type C = { timeRemain: number; timeTotal: number };
     }
+
+    export type Player = {
+      health: number;
+    };
 
     export namespace Systems {
       export function tick(state: T, time: number) {
@@ -767,19 +770,19 @@ namespace Game {
           }
         });
 
-        state.shootable.forEach((s, sid) => {
-          const shootablePos = state.positions.get(sid);
+        state.enemy.forEach((s, sid) => {
+          const enemyPos = state.positions.get(sid);
 
-          if (shootablePos.y > 0.8) {
+          if (enemyPos.y > 0.8) {
             // Off screen, slowly move on screen
-            shootablePos.y = shootablePos.y - 0.2 * time;
+            enemyPos.y = enemyPos.y - 0.2 * time;
           }
           state.renderables.forEach((r, rid) => {
             const bulletPos = state.positions.get(rid);
             if (r.type === "bullet") {
               const dist = Math.sqrt(
-                Math.pow(shootablePos.x - bulletPos.x, 2) +
-                  Math.pow(shootablePos.y - bulletPos.y, 2)
+                Math.pow(enemyPos.x - bulletPos.x, 2) +
+                  Math.pow(enemyPos.y - bulletPos.y, 2)
               );
               if (dist < 0.05) {
                 state.score += 10;
@@ -787,13 +790,13 @@ namespace Game {
                   "score"
                 ).innerText = state.score.toString();
                 state.dead.set(sid, true);
-                addExplosion(state, shootablePos);
+                addExplosion(state, enemyPos);
               }
             }
           });
         });
 
-        if (state.shootable.size <= 4) {
+        if (state.enemy.size <= 4) {
           Game.State.addEnemy(state);
         }
 
@@ -840,6 +843,27 @@ namespace Game {
               );
             }
           }
+
+          // Check for any bullets
+          state.renderables.forEach((r, bulletId) => {
+            const bulletPos = state.positions.get(bulletId);
+            if (r.type === "bullet") {
+              const dist = Math.sqrt(
+                Math.pow(playerPos.x - bulletPos.x, 2) +
+                  Math.pow(playerPos.y - bulletPos.y, 2)
+              );
+              if (dist < 0.05) {
+                if (player.health > 1) {
+                  player.health = player.health - 1;
+                  state.dead.set(bulletId, true);
+                  addExplosion(state, playerPos, 10);
+                } else {
+                  state.dead.set(playerId, true);
+                  addExplosion(state, playerPos);
+                }
+              }
+            }
+          });
         });
       }
 
@@ -858,13 +882,28 @@ namespace Game {
           state.players.delete(id);
           state.damping.delete(id);
           state.positions.delete(id);
-          state.shootable.delete(id);
+          state.enemy.delete(id);
           state.firingRate.delete(id);
           state.dead.delete(id);
         });
       }
 
       export function render(state: T, triRenderer: Renderers.Triangle) {
+        state.players.forEach(player => {
+          // Draw health bar first
+          for (let i = 1; i <= 5; i++) {
+            const col =
+              player.health >= i
+                ? { r: 1, g: 0, b: 0, a: 1 }
+                : { r: 0.3, g: 0, b: 0, a: 1 };
+            triRenderer.render({
+              scale: 0.02,
+              position: { x: -0.8, y: 0.6 + i * 0.02 },
+              rotation: 0,
+              color: col
+            });
+          }
+        });
         state.renderables.forEach((renderable, entityId) => {
           const pos = checkEntityExists(
             entityId,
@@ -915,7 +954,7 @@ namespace Game {
               );
               const color = 1.0 - lifetime.age / lifetime.lifespan;
               triRenderer.render({
-                scale: 0.03,
+                scale: 0.02,
                 position: pos,
                 rotation,
                 color: { r: color, g: 0, b: 0, a: color }
@@ -1013,7 +1052,7 @@ namespace Game {
 }
 
 Game.main();
-console.log('== CONTROLS ==');
-console.log('Arrow keys, X to shoot')
-console.log('or');
-console.log('WASD, J to shoot')
+console.log("== CONTROLS ==");
+console.log("Arrow keys, X to shoot");
+console.log("or");
+console.log("WASD, J to shoot");
