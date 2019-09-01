@@ -632,6 +632,7 @@ namespace Game {
       state.renderables.set(id, { type: "player" });
       state.headings.set(id, 0);
       state.firingRate.set(id, { timeRemain: 0, timeTotal: 0.3 });
+      state.shootable.set(id, true);
       state.positions.set(id, { x: 0.0, y: -0.8 });
     }
 
@@ -640,7 +641,10 @@ namespace Game {
       state.renderables.set(id, { type: "enemy" });
       state.headings.set(id, Math.PI);
       state.shootable.set(id, true);
-      state.firingRate.set(id, { timeRemain: 1, timeTotal: 0.6 });
+      state.firingRate.set(id, {
+        timeTotal: 0.8 + Math.random() * 0.4,
+        timeRemain: 1.0 + Math.random()
+      });
       state.positions.set(id, { x, y: 0.8 });
     }
 
@@ -679,6 +683,7 @@ namespace Game {
         nextId: 1 as EntityId,
         playerId: 0 as EntityId,
         keys: new Map(),
+        // players: new Map(),
         positions: new Map(),
         firingRate: new Map(),
         renderables: new Map(),
@@ -740,9 +745,18 @@ namespace Game {
           }
         });
 
-        state.firingRate.forEach(v => {
+        state.firingRate.forEach((v, id) => {
           // Don't let it go below zero
           v.timeRemain = Math.max(v.timeRemain - time, 0);
+
+          if (
+            v.timeRemain === 0 &&
+            state.renderables.get(id).type === "enemy"
+          ) {
+            const pos = state.positions.get(id);
+            addBullet(state, { x: pos.x, y: pos.y - 0.1 }, Math.PI);
+            v.timeRemain = v.timeTotal;
+          }
         });
 
         state.shootable.forEach((s, sid) => {
@@ -862,7 +876,7 @@ namespace Game {
                 scale: 0.03,
                 position: pos,
                 rotation,
-                color: { r: color, g: color, b: color, a: color }
+                color: { r: color, g: 0, b: 0, a: color }
               });
               break;
           }
