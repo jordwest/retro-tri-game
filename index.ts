@@ -224,16 +224,6 @@ namespace Game {
           gl.FLOAT,
           null
         );
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
-        // Attach a texture to it.
-        gl.framebufferTexture2D(
-          gl.FRAMEBUFFER,
-          gl.COLOR_ATTACHMENT0,
-          gl.TEXTURE_2D,
-          this.texture,
-          0
-        );
       }
 
       static create(gl: Ctx, width: number, height: number) {
@@ -242,6 +232,13 @@ namespace Game {
 
       use() {
         this.gl.bindFramebuffer(GL.FRAMEBUFFER, this.framebuffer);
+        this.gl.framebufferTexture2D(
+          this.gl.FRAMEBUFFER,
+          this.gl.COLOR_ATTACHMENT0,
+          this.gl.TEXTURE_2D,
+          this.texture,
+          0
+        );
       }
 
       disconnect() {
@@ -269,13 +266,14 @@ namespace Game {
       }
 
       set(arr: BufferSource & { length: number }) {
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.glBuffer);
+        this.bind();
         this.gl.bufferData(
           this.gl.ARRAY_BUFFER,
           arr as any,
           this.gl.STATIC_DRAW
         );
         this.length = arr.length;
+        this.gl.bindBuffer(GL.ARRAY_BUFFER, null);
       }
 
       get components() {
@@ -317,16 +315,22 @@ namespace Game {
         vertSource: Shader.Source,
         fragSource: Shader.Source
       ) {
-        const program = Result.unwrap(
-          Shader.Utils.createProgram(gl, vertSource, fragSource)
+        const program = new Program(
+          gl,
+          Result.unwrap(Shader.Utils.createProgram(gl, vertSource, fragSource))
         );
-        return new Program(gl, program);
+        program.use();
+        return program;
+      }
+
+      getAttribLocation(name: string) {
+        return this.gl.getAttribLocation(this.glProgram, name);
       }
 
       addVertexAttribArray(attribName: string, buf: Buffer) {
         this.use();
         buf.bind();
-        const location = this.gl.getAttribLocation(this.glProgram, attribName);
+        const location = this.getAttribLocation(attribName);
         this.gl.vertexAttribPointer(
           location,
           buf.componentSize,
@@ -336,6 +340,8 @@ namespace Game {
           0
         );
         this.gl.enableVertexAttribArray(location);
+        this.gl.bindBuffer(GL.ARRAY_BUFFER, null);
+        this.gl.useProgram(null);
       }
 
       getUniform(name: string) {
@@ -366,12 +372,13 @@ namespace Game {
       triBuffer: WebGL.Buffer;
 
       constructor(gl: WebGL.Ctx) {
-        const program = WebGL.Program.create(
+        this.program = WebGL.Program.create(
           gl,
           Shader.Color.vert,
           Shader.Color.frag
         );
 
+        this.program.use();
         this.triBuffer = new WebGL.Buffer(gl, "float", 2);
         this.triBuffer.set(
           Vec2.FloatArray.from([
@@ -380,39 +387,58 @@ namespace Game {
             { x: 1, y: -1 }
           ]).arr
         );
-        program.addVertexAttribArray("position", this.triBuffer);
 
         this.gl = gl;
-        this.program = program;
       }
 
       render(opts: { scale: number }) {
+        this.program.use();
+        this.program.addVertexAttribArray("position", this.triBuffer);
         const uScale = this.program.getUniform("uScale");
         uScale.set1f(opts.scale);
         this.gl.drawArrays(GL.TRIANGLES, 0, this.triBuffer.components);
       }
     }
 
-    export class Blur {
-      program: WebGL.Program;
+    export class Glow {
+      gl: WebGL.Ctx;
+      blurProgram: WebGL.Program;
+      quadBuffer: WebGL.Buffer;
+      texQuadBuffer: WebGL.Buffer;
 
       constructor(gl: WebGL.Ctx) {
-        const program = WebGL.Program.create(
+        this.gl = gl;
+        this.blurProgram = WebGL.Program.create(
           gl,
           Shader.Glow.vert,
           Shader.Glow.frag
         );
 
-        const triBuffer = new WebGL.Buffer(gl, "float", 2);
-        triBuffer.set(
-          Vec2.FloatArray.from([
-            { x: -1, y: -1 },
-            { x: 0, y: 1 },
-            { x: 1, y: -1 }
-          ]).arr
-        );
+        this.quadBuffer = new WebGL.Buffer(gl, "float", 2);
+        this.texQuadBuffer = new WebGL.Buffer(gl, "float", 2);
 
-        program.addVertexAttribArray("position", triBuffer);
+        this.quadBuffer.set(WebGL.createQuad(-1, -1, 1, 1).arr);
+        this.texQuadBuffer.set(WebGL.createQuad(0, 0, 1, 1).arr);
+      }
+
+      render(opts: {
+        srcTexture: WebGLTexture;
+        resolution: { width: number; height: number };
+      }) {
+        this.blurProgram.use();
+
+        this.blurProgram.addVertexAttribArray("position", this.quadBuffer);
+        this.blurProgram.addVertexAttribArray("aTexCoord", this.texQuadBuffer);
+
+        const uTexLoc = this.blurProgram.getUniform("uSourceImage");
+        const uResolution = this.blurProgram.getUniform("uResolution");
+
+        this.gl.activeTexture(GL.TEXTURE0);
+        this.gl.bindTexture(GL.TEXTURE_2D, opts.srcTexture);
+        uTexLoc.set1i(0);
+        uResolution.set2f(opts.resolution.width, opts.resolution.height);
+
+        this.gl.drawArrays(GL.TRIANGLES, 0, this.quadBuffer.components);
       }
     }
   }
@@ -424,53 +450,31 @@ namespace Game {
     canvas.height = window.devicePixelRatio * window.innerHeight;
 
     const gl = canvas.getContext("webgl");
+    const triangleRenderer = new Renderers.Triangle(gl);
+    const glowRenderer = new Renderers.Glow(gl);
 
-    const glowProgram = WebGL.Program.create(
-      gl,
-      Shader.Glow.vert,
-      Shader.Glow.frag
-    );
-
-    const firstPassTarget = WebGL.RenderTarget.create(
+    const baseRenderTarget = WebGL.RenderTarget.create(
       gl,
       canvas.width,
       canvas.height
     );
-    firstPassTarget.use();
+    baseRenderTarget.use();
 
-    const triangleRenderer = new Renderers.Triangle(gl);
-
-    // FIRST PASS - Raw game
+    // FIRST PASS - Base game
 
     WebGL.clear(gl);
-    triangleRenderer.render({ scale: 0.2 });
-
-    firstPassTarget.disconnect();
+    triangleRenderer.render({ scale: 1 });
 
     // SECOND PASS - Glow effect
-
-    const quadBuffer = new WebGL.Buffer(gl, "float", 2);
-    const texQuadBuffer = new WebGL.Buffer(gl, "float", 2);
-
-    quadBuffer.set(WebGL.createQuad(-1, -1, 1, 1).arr);
-    texQuadBuffer.set(WebGL.createQuad(0, 0, 1, 1).arr);
-
-    glowProgram.addVertexAttribArray("position", quadBuffer);
-    glowProgram.addVertexAttribArray("aTexCoord", texQuadBuffer);
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, firstPassTarget.texture);
-
-    const uTexLoc = glowProgram.getUniform("uSourceImage");
-    const uResolution = glowProgram.getUniform("uResolution");
-
-    uTexLoc.set1i(0);
-    uResolution.set2f(canvas.width, canvas.height);
+    baseRenderTarget.disconnect();
 
     WebGL.clear(gl);
 
-    glowProgram.use();
-    gl.drawArrays(gl.TRIANGLES, 0, quadBuffer.components);
+    const { width, height } = canvas;
+    glowRenderer.render({
+      srcTexture: baseRenderTarget.texture,
+      resolution: { width, height }
+    });
   }
 }
 
