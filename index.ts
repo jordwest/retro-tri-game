@@ -597,6 +597,7 @@ namespace Game {
     export type T = {
       nextId: EntityId;
       keys: Map<string, boolean>;
+      score: number;
       players: Map<EntityId, boolean>;
       firingRate: Map<EntityId, FiringRate.C>;
       positions: Map<EntityId, Vec2.T>;
@@ -686,6 +687,7 @@ namespace Game {
     export function create(): T {
       const state: T = {
         nextId: 0 as EntityId,
+        score: 0,
         keys: new Map(),
         players: new Map(),
         positions: new Map(),
@@ -780,6 +782,10 @@ namespace Game {
                   Math.pow(shootablePos.y - bulletPos.y, 2)
               );
               if (dist < 0.05) {
+                state.score += 10;
+                document.getElementById(
+                  "score"
+                ).innerText = state.score.toString();
                 state.dead.set(sid, true);
                 addExplosion(state, shootablePos);
               }
@@ -791,15 +797,20 @@ namespace Game {
           Game.State.addEnemy(state);
         }
 
-        const moveSpeed = 0.8;
+        const moveSpeed = 1.2;
         state.players.forEach((player, playerId) => {
+          const playerPos = state.positions.get(playerId);
+          if (state.keys.get("ArrowUp") === true) {
+            playerPos.y += moveSpeed * time;
+          }
+          if (state.keys.get("ArrowDown") === true) {
+            playerPos.y -= moveSpeed * time;
+          }
           if (state.keys.get("ArrowLeft") === true) {
-            const player = state.positions.get(playerId);
-            player.x -= moveSpeed * time;
+            playerPos.x -= moveSpeed * time;
           }
           if (state.keys.get("ArrowRight") === true) {
-            const player = state.positions.get(playerId);
-            player.x += moveSpeed * time;
+            playerPos.x += moveSpeed * time;
           }
           if (state.keys.get("x") === true) {
             const firingRate = state.firingRate.get(playerId);
@@ -914,13 +925,17 @@ namespace Game {
 
     const gameState = Game.State.create();
     Game.State.addPlayer(gameState);
-    const handledKeys = ["ArrowLeft", "ArrowRight", "x"];
+    const handledKeys = [
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+      "x"
+    ];
     document.addEventListener("keydown", e => {
       if (handledKeys.includes(e.key)) {
         e.preventDefault();
         gameState.keys.set(e.key, true);
-      } else {
-        console.log("unhandled key", e.key);
       }
     });
     document.addEventListener("keyup", e => {
