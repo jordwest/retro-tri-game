@@ -1013,3 +1013,7 @@ namespace Game {
 }
 
 Game.main();
+console.log('== CONTROLS ==');
+console.log('Arrow keys, X to shoot')
+console.log('or');
+console.log('WASD, J to shoot')
