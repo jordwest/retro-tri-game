@@ -800,19 +800,31 @@ namespace Game {
         const moveSpeed = 1.2;
         state.players.forEach((player, playerId) => {
           const playerPos = state.positions.get(playerId);
-          if (state.keys.get("ArrowUp") === true) {
+          if (
+            state.keys.get("ArrowUp") === true ||
+            state.keys.get("w") === true
+          ) {
             playerPos.y += moveSpeed * time;
           }
-          if (state.keys.get("ArrowDown") === true) {
+          if (
+            state.keys.get("ArrowDown") === true ||
+            state.keys.get("s") === true
+          ) {
             playerPos.y -= moveSpeed * time;
           }
-          if (state.keys.get("ArrowLeft") === true) {
+          if (
+            state.keys.get("ArrowLeft") === true ||
+            state.keys.get("a") === true
+          ) {
             playerPos.x -= moveSpeed * time;
           }
-          if (state.keys.get("ArrowRight") === true) {
+          if (
+            state.keys.get("ArrowRight") === true ||
+            state.keys.get("d") === true
+          ) {
             playerPos.x += moveSpeed * time;
           }
-          if (state.keys.get("x") === true) {
+          if (state.keys.get("x") === true || state.keys.get("j") === true) {
             const firingRate = state.firingRate.get(playerId);
             if (firingRate && firingRate.timeRemain > 0) {
               // Not ready yet
@@ -930,6 +942,11 @@ namespace Game {
       "ArrowDown",
       "ArrowLeft",
       "ArrowRight",
+      "w",
+      "a",
+      "s",
+      "d",
+      "j",
       "x"
     ];
     document.addEventListener("keydown", e => {
