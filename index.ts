@@ -135,6 +135,44 @@ namespace Game {
                 }
         ` as Shader.Source;
     }
+
+    export namespace Blur {
+      export const vert = `
+                precision mediump float;
+                attribute vec2 position;
+                attribute vec2 aTexCoord;
+                varying vec2 texCoord;
+
+                void main() {
+                    texCoord = aTexCoord;
+                    gl_Position = vec4(position, 0.0, 1.0);
+                }
+            ` as Shader.Source;
+
+      export const frag = `
+                precision mediump float;
+                uniform sampler2D uSourceImage;
+                uniform vec2 uResolution;
+                uniform vec2 uOrientation;
+                varying vec2 texCoord;
+
+                void main() {
+                  const int kernelHalfWidth = 12;
+
+                  vec3 srcCol = texture2D(uSourceImage, texCoord).xyz;
+                  vec3 outCol = vec3(0.0, 0.0, 0.0);
+                  vec2 perPixelOffset = (1.0 / uResolution) * uOrientation;
+                  for (int x = -kernelHalfWidth; x < kernelHalfWidth; x++) {
+                      vec2 offset = perPixelOffset * float(x);
+                      float dist = distance(vec2(0.0, 0.0), offset);
+                      float magnitude = (1.0 - (dist / float(kernelHalfWidth))) + 0.5;
+                      outCol += (texture2D(uSourceImage, texCoord + offset).xyz * magnitude);
+                  }
+                  outCol = outCol / (float(kernelHalfWidth) * 2.0);
+                  gl_FragColor = vec4(outCol, 1.0);
+                }
+        ` as Shader.Source;
+    }
   }
 
   export namespace Vec2 {
@@ -191,6 +229,8 @@ namespace Game {
     }
 
     export class RenderTarget {
+      static targets: RenderTarget[] = [];
+
       framebuffer: WebGLFramebuffer;
       texture: WebGLTexture;
       gl: Ctx;
@@ -230,7 +270,35 @@ namespace Game {
         return new RenderTarget(gl, width, height);
       }
 
-      use() {
+      private static push(target: RenderTarget) {
+        RenderTarget.targets.push(target);
+        target.use();
+      }
+
+      with(f: () => void) {
+        RenderTarget.push(this);
+        f();
+        RenderTarget.pop();
+      }
+
+      private static pop(): RenderTarget | undefined {
+        const result = RenderTarget.targets.pop();
+        if (result == null) {
+          console.error("Attempted to pop RenderTarget when none are bound");
+          return;
+        }
+
+        const remaining = RenderTarget.targets.length;
+        if (remaining >= 1) {
+          // Use the previously bound framebuffer
+          RenderTarget.targets[remaining - 1].use();
+        } else {
+          result.disconnect();
+        }
+        return result;
+      }
+
+      private use() {
         this.gl.bindFramebuffer(GL.FRAMEBUFFER, this.framebuffer);
         this.gl.framebufferTexture2D(
           this.gl.FRAMEBUFFER,
@@ -241,7 +309,7 @@ namespace Game {
         );
       }
 
-      disconnect() {
+      private disconnect() {
         this.gl.bindFramebuffer(GL.FRAMEBUFFER, null);
       }
     }
@@ -410,8 +478,8 @@ namespace Game {
         this.gl = gl;
         this.blurProgram = WebGL.Program.create(
           gl,
-          Shader.Glow.vert,
-          Shader.Glow.frag
+          Shader.Blur.vert,
+          Shader.Blur.frag
         );
 
         this.quadBuffer = new WebGL.Buffer(gl, "float", 2);
@@ -432,10 +500,12 @@ namespace Game {
 
         const uTexLoc = this.blurProgram.getUniform("uSourceImage");
         const uResolution = this.blurProgram.getUniform("uResolution");
+        const uOrientation = this.blurProgram.getUniform("uOrientation");
 
         this.gl.activeTexture(GL.TEXTURE0);
         this.gl.bindTexture(GL.TEXTURE_2D, opts.srcTexture);
         uTexLoc.set1i(0);
+        uOrientation.set2f(1.0, 0.0);
         uResolution.set2f(opts.resolution.width, opts.resolution.height);
 
         this.gl.drawArrays(GL.TRIANGLES, 0, this.quadBuffer.components);
@@ -458,15 +528,11 @@ namespace Game {
       canvas.width,
       canvas.height
     );
-    baseRenderTarget.use();
 
-    // FIRST PASS - Base game
-
-    WebGL.clear(gl);
-    triangleRenderer.render({ scale: 1 });
-
-    // SECOND PASS - Glow effect
-    baseRenderTarget.disconnect();
+    baseRenderTarget.with(() => {
+      WebGL.clear(gl);
+      triangleRenderer.render({ scale: 0.3 });
+    });
 
     WebGL.clear(gl);
 
