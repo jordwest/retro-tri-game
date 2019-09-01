@@ -80,16 +80,18 @@ namespace Game {
                 precision mediump float;
                 attribute vec2 position;
                 uniform float uScale;
+                uniform vec2 uPosition;
 
                 void main() {
-                    gl_Position = vec4(position * uScale, 0.0, 1.0);
+                    gl_Position = vec4((position + uPosition) * uScale, 0.0, 1.0);
                 }
             ` as Shader.Source;
 
       export const frag = `
                 precision mediump float;
+                uniform vec3 uColor;
                 void main() {
-                    gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+                    gl_FragColor = vec4(uColor, 1.0);
                 }
             ` as Shader.Source;
     }
@@ -110,28 +112,20 @@ namespace Game {
       export const frag = `
                 precision mediump float;
                 uniform sampler2D uSourceImage;
-                uniform vec2 uResolution;
+                uniform sampler2D uBlurImage;
                 varying vec2 texCoord;
 
                 void main() {
-                  const int kernelHalfWidth = 12;
 
                   vec3 srcCol = texture2D(uSourceImage, texCoord).xyz;
-                  vec3 glowCol = vec3(0.0, 0.0, 0.0);
-                  for (int x = -kernelHalfWidth; x < kernelHalfWidth; x++) {
-                    for (int y = -kernelHalfWidth; y < kernelHalfWidth; y++) {
-                      vec2 perPixel = 1.0 / uResolution;
-                      vec2 offset = vec2(perPixel.x * float(x), perPixel.y * float(y));
-                      // float dist = sqrt(exp(offset.x, 2), exp(offset.y, 2));
-                      float dist = distance(vec2(0.0, 0.0), offset);
-                      float magnitude = (1.0 - (dist / float(kernelHalfWidth))) + 0.5;
-                      glowCol += (texture2D(uSourceImage, texCoord + offset).xyz * magnitude);
-                    }
-                  }
-                  glowCol = glowCol / ((float(kernelHalfWidth) * 2.0) * (float(kernelHalfWidth) * 2.0));
-                  gl_FragColor = vec4(srcCol, 1.0) + vec4(glowCol, 1.0);
-                  // gl_FragColor = vec4(srcCol, 1.0);
-                  // gl_FragColor = vec4(glowCol, 1.0);
+                  vec3 glowCol = texture2D(uBlurImage, texCoord).xyz;
+
+                  float scanline = 0.9 + (0.1 * sin(gl_FragCoord.y));
+
+                  vec3 outCol = (srcCol + (glowCol * 0.3));
+                  outCol = vec3(min(outCol.r, 1.0), min(outCol.g, 1.0), min(outCol.b, 1.0));
+
+                  gl_FragColor = vec4(outCol * scanline, 1.0);
                 }
         ` as Shader.Source;
     }
@@ -157,7 +151,7 @@ namespace Game {
                 varying vec2 texCoord;
 
                 void main() {
-                  const int kernelHalfWidth = 12;
+                  const int kernelHalfWidth = 21;
 
                   vec3 srcCol = texture2D(uSourceImage, texCoord).xyz;
                   vec3 outCol = vec3(0.0, 0.0, 0.0);
@@ -169,7 +163,7 @@ namespace Game {
                       outCol += (texture2D(uSourceImage, texCoord + offset).xyz * magnitude);
                   }
                   outCol = outCol / (float(kernelHalfWidth) * 2.0);
-                  gl_FragColor = vec4(outCol, 1.0);
+                  gl_FragColor = vec4(outCol * 1.0, 1.0);
                 }
         ` as Shader.Source;
     }
@@ -369,6 +363,10 @@ namespace Game {
       set2f(x: number, y: number) {
         this.gl.uniform2f(this.loc, x, y);
       }
+
+      set3f(x: number, y: number, z: number) {
+        this.gl.uniform3f(this.loc, x, y, z);
+      }
     }
 
     export class Program {
@@ -459,11 +457,19 @@ namespace Game {
         this.gl = gl;
       }
 
-      render(opts: { scale: number }) {
+      render(opts: {
+        scale: number;
+        position: { x: number; y: number };
+        color: { r: number; g: number; b: number };
+      }) {
         this.program.use();
         this.program.addVertexAttribArray("position", this.triBuffer);
         const uScale = this.program.getUniform("uScale");
         uScale.set1f(opts.scale);
+        const uColor = this.program.getUniform("uColor");
+        uColor.set3f(opts.color.r, opts.color.g, opts.color.b);
+        const uPosition = this.program.getUniform("uPosition");
+        uPosition.set2f(opts.position.x, opts.position.y);
         this.gl.drawArrays(GL.TRIANGLES, 0, this.triBuffer.components);
       }
     }
@@ -471,8 +477,11 @@ namespace Game {
     export class Glow {
       gl: WebGL.Ctx;
       blurProgram: WebGL.Program;
+      glowProgram: WebGL.Program;
       quadBuffer: WebGL.Buffer;
       texQuadBuffer: WebGL.Buffer;
+      intermediateTarget: WebGL.RenderTarget;
+      intermediateTarget2: WebGL.RenderTarget;
 
       constructor(gl: WebGL.Ctx) {
         this.gl = gl;
@@ -481,12 +490,28 @@ namespace Game {
           Shader.Blur.vert,
           Shader.Blur.frag
         );
+        this.glowProgram = WebGL.Program.create(
+          gl,
+          Shader.Glow.vert,
+          Shader.Glow.frag
+        );
 
         this.quadBuffer = new WebGL.Buffer(gl, "float", 2);
         this.texQuadBuffer = new WebGL.Buffer(gl, "float", 2);
 
         this.quadBuffer.set(WebGL.createQuad(-1, -1, 1, 1).arr);
         this.texQuadBuffer.set(WebGL.createQuad(0, 0, 1, 1).arr);
+
+        this.intermediateTarget = WebGL.RenderTarget.create(
+          gl,
+          gl.drawingBufferWidth,
+          gl.drawingBufferHeight
+        );
+        this.intermediateTarget2 = WebGL.RenderTarget.create(
+          gl,
+          gl.drawingBufferWidth,
+          gl.drawingBufferHeight
+        );
       }
 
       render(opts: {
@@ -502,12 +527,53 @@ namespace Game {
         const uResolution = this.blurProgram.getUniform("uResolution");
         const uOrientation = this.blurProgram.getUniform("uOrientation");
 
-        this.gl.activeTexture(GL.TEXTURE0);
-        this.gl.bindTexture(GL.TEXTURE_2D, opts.srcTexture);
-        uTexLoc.set1i(0);
-        uOrientation.set2f(1.0, 0.0);
         uResolution.set2f(opts.resolution.width, opts.resolution.height);
 
+        this.intermediateTarget.with(() => {
+          this.gl.activeTexture(GL.TEXTURE0);
+          this.gl.bindTexture(GL.TEXTURE_2D, opts.srcTexture);
+          uTexLoc.set1i(0);
+          uOrientation.set2f(0.0, 1.0);
+          this.gl.drawArrays(GL.TRIANGLES, 0, this.quadBuffer.components);
+        });
+
+        this.intermediateTarget2.with(() => {
+          this.gl.activeTexture(GL.TEXTURE0);
+          this.gl.bindTexture(GL.TEXTURE_2D, this.intermediateTarget.texture);
+          uTexLoc.set1i(0);
+          uOrientation.set2f(1.0, 0.0);
+          this.gl.drawArrays(GL.TRIANGLES, 0, this.quadBuffer.components);
+        });
+
+        this.intermediateTarget.with(() => {
+          this.gl.activeTexture(GL.TEXTURE0);
+          this.gl.bindTexture(GL.TEXTURE_2D, this.intermediateTarget2.texture);
+          uTexLoc.set1i(0);
+          uOrientation.set2f(0.0, 1.0);
+          this.gl.drawArrays(GL.TRIANGLES, 0, this.quadBuffer.components);
+        });
+
+        this.intermediateTarget2.with(() => {
+          this.gl.activeTexture(GL.TEXTURE0);
+          this.gl.bindTexture(GL.TEXTURE_2D, this.intermediateTarget.texture);
+          uTexLoc.set1i(0);
+          uOrientation.set2f(1.0, 0.0);
+          this.gl.drawArrays(GL.TRIANGLES, 0, this.quadBuffer.components);
+        });
+
+        this.glowProgram.use();
+        this.glowProgram.addVertexAttribArray("position", this.quadBuffer);
+        this.glowProgram.addVertexAttribArray("aTexCoord", this.texQuadBuffer);
+
+        const uSrcTexLoc = this.glowProgram.getUniform("uSourceImage");
+        const uBlurImage = this.glowProgram.getUniform("uBlurImage");
+
+        this.gl.activeTexture(GL.TEXTURE0);
+        this.gl.bindTexture(GL.TEXTURE_2D, opts.srcTexture);
+        uSrcTexLoc.set1i(0);
+        this.gl.activeTexture(GL.TEXTURE1);
+        this.gl.bindTexture(GL.TEXTURE_2D, this.intermediateTarget2.texture);
+        uBlurImage.set1i(1);
         this.gl.drawArrays(GL.TRIANGLES, 0, this.quadBuffer.components);
       }
     }
@@ -531,7 +597,21 @@ namespace Game {
 
     baseRenderTarget.with(() => {
       WebGL.clear(gl);
-      triangleRenderer.render({ scale: 0.3 });
+      triangleRenderer.render({
+        scale: 0.3,
+        color: { r: 1, g: 0, b: 0 },
+        position: { x: -0.8, y: 0.3 }
+      });
+      triangleRenderer.render({
+        scale: 0.3,
+        color: { r: 0, g: 0, b: 1 },
+        position: { x: 0.8, y: 0.2 }
+      });
+      triangleRenderer.render({
+        scale: 0.3,
+        color: { r: 0, g: 1, b: 0 },
+        position: { x: 0.0, y: 0.6 }
+      });
     });
 
     WebGL.clear(gl);
