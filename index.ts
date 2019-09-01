@@ -820,17 +820,18 @@ namespace Game {
                   addPowerup(state, enemyPos, "health");
                 }
                 addExplosion(state, enemyPos);
+                state.dead.set(rid, true);
               }
             }
           });
         });
 
-        // let targetEnemies = 4;
-        // if () {
+        let targetEnemies = 4;
+        if (state.score > 100) {
+          targetEnemies = 4 + state.score / 50;
+        }
 
-        // }
-
-        if (state.enemy.size <= 4) {
+        if (state.enemy.size <= targetEnemies) {
           Game.State.addEnemy(state);
         }
 
