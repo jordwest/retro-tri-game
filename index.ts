@@ -754,6 +754,13 @@ namespace Game {
 
     export namespace Systems {
       export function tick(state: T, time: number) {
+        let player: State.Player, playerId: EntityId;
+
+        state.players.forEach((p, pId) => {
+          player = p;
+          playerId = pId;
+        });
+
         state.lifetimes.forEach((l, entityId) => {
           l.age += time;
           if (l.age > l.lifespan) {
@@ -811,12 +818,26 @@ namespace Game {
                   "score"
                 ).innerText = state.score.toString();
                 state.dead.set(sid, true);
-                const rand = Math.random();
-                if (rand > 0.9) {
+                let trigunChance = 0;
+                let healthChance = 0.05;
+                let maxHealthChance = 0;
+                if (!player.trigunPowerup && state.score > 200) {
+                  trigunChance = 0.05;
+                }
+
+                if (player.health < 3) {
+                  healthChance = 0.08;
+                }
+
+                if (player.maxHealth < 10 && state.score > 300) {
+                  maxHealthChance = 0.04;
+                }
+
+                if (Math.random() < trigunChance) {
                   addPowerup(state, enemyPos, "trigun");
-                } else if (rand > 0.8) {
+                } else if (Math.random() < maxHealthChance) {
                   addPowerup(state, enemyPos, "healthupgrade");
-                } else if (rand > 0.7) {
+                } else if (Math.random() < healthChance) {
                   addPowerup(state, enemyPos, "health");
                 }
                 addExplosion(state, enemyPos);
